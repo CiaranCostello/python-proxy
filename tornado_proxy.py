@@ -3,17 +3,17 @@ from urllib.parse import urlparse
 
 blocked_urls = ['www.cbrenn.xyz','www.youtube.com','imgur.com']
 
+# Provides a management console also on port 8888. 
+# Shows a list of blocked urls and gives the option to add to or remove from the list.
 class ManagementConsole(tornado.web.RequestHandler):
 	SUPPORTED_METHODS = ['GET', 'POST']
 
 	@tornado.web.asynchronous
 	def get(self):
-		print("Get received by ManagementConsole")
 		self.render('management_console.html', list=blocked_urls)
 
 	@tornado.web.asynchronous
 	def post(self):
-		print("Post received by ManagementConsole")
 		blocked_urls.append(self.get_argument('block_url', None))
 		try:
 			blocked_urls.remove(self.get_argument('unblock_url', ''))
@@ -24,7 +24,7 @@ class ManagementConsole(tornado.web.RequestHandler):
 class MainHandler(tornado.web.RequestHandler):
 	SUPPORTED_METHODS = ['GET', 'POST', 'CONNECT']
 
-	#disable etags
+	#disable etags as not handled by server
 	def compute_etag(self):
 		return None
 
@@ -40,13 +40,14 @@ class MainHandler(tornado.web.RequestHandler):
 			else:
 				#handle caching
 				url = response.request.url
+				#if it already exists in the cache then no need to cache again
 				if not cache.exists(url):
 					print('Storing result of request to {0} in cache'.format(url))
 					bytestream = pickle.dumps(response)
 					cache.set(url, bytestream)
 					#set max age of the cache entry
 					cache.expire(url, cache_control_time(response.headers.get_list('Cache-Control')))
-
+				#handle headers
 				self.set_status(response.code, response.reason)
 				self._headers = tornado.httputil.HTTPHeaders()
 				for h, v in response.headers.get_all():
@@ -54,9 +55,6 @@ class MainHandler(tornado.web.RequestHandler):
 						self.add_header(h, v)
 				if response.body:
 					self.write(response.body)
-			self.finish()
-		def cached_response_handler(response):
-			self.write(response)
 			self.finish()
 		#Check if the url is being blocked
 		base_url = urlparse(self.request.uri).hostname
@@ -68,7 +66,7 @@ class MainHandler(tornado.web.RequestHandler):
 		else:
 		#sends request to the server and uses callback to call response handler
 			fetch_coroutine(
-					self.request.uri, response_handler, cached_response_handler,
+					self.request.uri, response_handler, 
 					method=self.request.method, body=self.request.body,
 					headers=self.request.headers, follow_redirects=False,
 					allow_nonstandard_methods=True)
@@ -78,18 +76,22 @@ class MainHandler(tornado.web.RequestHandler):
 	def post(self):
 		return self.get()
 
+	# handle https connections
+	# provide tunnelling from client to server
 	@tornado.web.asynchronous
 	def connect(self):
 		print('Start CONNECT to {0}'.format(self.request.uri))
 		base_url = urlparse(self.request.uri)
 		base_url = self.request.uri.split(':')[0]
-		print(base_url)
+		# block any blocked urls
 		if base_url in blocked_urls:
 			print('CONNECT {0} blocked'.format(base_url))
 			self.write('This url is blocked by the proxy')
 			self.finish()
+		# other wise establish a connection
 		else:
 			host, port = self.request.uri.split(':')
+			#get client socket
 			client = self.request.connection.stream
 
 			def forward_from_client(data):
@@ -122,15 +124,21 @@ class MainHandler(tornado.web.RequestHandler):
 
 			def start_tunnel():
 				print('Tunnel started to {0}'.format(self.request.uri))
+				# forward all traffic in either direction
 				client.read_until_close(close_server, forward_from_client)
 				server.read_until_close(close_client, forward_from_server)
+				# enform client connection is open to start traffic
 				client.write(b'HTTP/1.0 200 Connection established\r\n\r\n')
 
+			# open socket and connect to server using host and port
 			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
 			server = tornado.iostream.IOStream(s)
+			# also start tunnel on connection
 			server.connect((host, int(port)), start_tunnel)
 
-def fetch_coroutine(url, callback, cachecallback, **kwargs):
+# called by MainHandler.get()
+# forms request. Gets response from handler and calls callback
+def fetch_coroutine(url, callback, **kwargs):
 	req = tornado.httpclient.HTTPRequest(url, **kwargs)
 	client = tornado.httpclient.AsyncHTTPClient()
 	#add caching here of the request 
