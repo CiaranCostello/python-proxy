@@ -1,0 +1,29 @@
+<html>
+
+<head>
+	<h1>Management Console</h1>
+</head>
+
+<body>
+<form method="post">
+	Block Url:<br>
+	<input type="text" name="block_url">
+	<br>
+	Unblock Url:<br>
+	<input type="text" name="unblock_url"><br>
+	<input type="submit">
+</form>
+
+<p>If a url is not blocked unblocking it will have no effect. Likewise if a url is already blocked, blocking it will have no effect.</p>
+<h2>Blocked Urls</h2>
+<table border="1">
+	{% for url in list %}
+	<tr>
+	<td>{{ url }}</td>
+	</tr>
+	{% end %}
+</table>
+
+</body>
+
+</html>
